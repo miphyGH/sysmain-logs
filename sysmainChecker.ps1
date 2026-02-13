@@ -12,19 +12,16 @@ function Warn($t){ Write-Host $t -ForegroundColor Yellow }
 
 $prefetchPath = "$env:SystemRoot\Prefetch"
 
-Section "Minecraft / Java Prefetch Content Scan"
+Section "Minecraft / Java Prefetch File Scan"
 
 if (!(Test-Path $prefetchPath)) {
     Write-Host "Prefetch folder not found." -ForegroundColor Red
     exit
 }
 
-# Find Minecraft / Java related prefetch files
+# Find Minecraft / Java prefetch files
 $pfFiles = Get-ChildItem $prefetchPath -Filter "*.pf" -ErrorAction SilentlyContinue |
-Where-Object {
-    $_.Name -match "MINECRAFT" -or
-    $_.Name -match "JAVA"
-}
+Where-Object { $_.Name -match "MINECRAFT" -or $_.Name -match "JAVA" }
 
 if (!$pfFiles) {
     Warn "No Minecraft or Java prefetch files found."
@@ -38,28 +35,20 @@ foreach ($pf in $pfFiles) {
     # Read raw bytes
     $bytes = [System.IO.File]::ReadAllBytes($pf.FullName)
 
-    # Extract readable Unicode strings
-    $content = [System.Text.Encoding]::Unicode.GetString($bytes)
+    # Convert to ASCII printable strings (length ≥4)
+    $strings = -join ($bytes | ForEach-Object {
+        if ($_ -ge 32 -and $_ -le 126) { [char]$_ } else { " " }
+    }) -split '\s+'
 
     # Find .exe, .jar, .zip references
-    $matches = Select-String -InputObject $content -Pattern '\S+\.(exe|jar|zip)' -AllMatches
+    $matches = $strings | Where-Object { $_ -match '\.exe$|\.jar$|\.zip$' } | Sort-Object -Unique
 
-    if ($matches.Matches.Count -eq 0) {
+    if ($matches.Count -eq 0) {
         Warn "No .exe / .jar / .zip references found."
-        continue
-    }
-
-    $found = @()
-
-    foreach ($m in $matches.Matches) {
-        $found += $m.Value
-    }
-
-    # Remove duplicates
-    $unique = $found | Sort-Object -Unique
-
-    foreach ($item in $unique) {
-        Good $item
+    } else {
+        foreach ($item in $matches) {
+            Good $item
+        }
     }
 }
 
