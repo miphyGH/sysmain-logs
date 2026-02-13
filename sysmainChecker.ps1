@@ -1,5 +1,4 @@
 Clear-Host
-$serviceName = "SysMain"
 
 function Section($text) {
     Write-Host ""
@@ -13,89 +12,109 @@ function Bad($t){ Write-Host $t -ForegroundColor Red }
 function Warn($t){ Write-Host $t -ForegroundColor Yellow }
 function Info($t){ Write-Host $t -ForegroundColor Gray }
 
-# ================= CURRENT STATUS =================
-Section "Current SysMain Status"
+# ================= SYSMAIN STATUS =================
+Section "SysMain Current Status"
 
-$svc = Get-Service $serviceName -ErrorAction SilentlyContinue
-$wmi = Get-CimInstance Win32_Service -Filter "Name='$serviceName'"
+$svc = Get-Service "SysMain" -ErrorAction SilentlyContinue
+$wmi = Get-CimInstance Win32_Service -Filter "Name='SysMain'"
 
 if (!$svc) {
-    Bad "SysMain service not found."
-    exit
+    Bad "SysMain not found."
+} else {
+    Write-Host "Status       : " -NoNewline
+    if ($svc.Status -eq "Running") { Good "Running" } else { Bad $svc.Status }
+
+    Write-Host "Startup Type : " -NoNewline
+    if ($wmi.StartMode -eq "Disabled") { Bad "Disabled" }
+    elseif ($wmi.StartMode -eq "Auto") { Good "Automatic" }
+    else { Warn $wmi.StartMode }
 }
 
-Write-Host "Status       : " -NoNewline
-if ($svc.Status -eq "Running") { Good "Running" } else { Bad $svc.Status }
-
-Write-Host "Startup Type : " -NoNewline
-if ($wmi.StartMode -eq "Disabled") { Bad "Disabled" }
-elseif ($wmi.StartMode -eq "Auto") { Good "Automatic" }
-else { Warn $wmi.StartMode }
-
-# ================= STARTUP TYPE CHANGES =================
-Section "Startup Type Change History (Event ID 7040)"
+# ================= SYSMAIN CHANGE HISTORY =================
+Section "SysMain Startup Type Change History (Event 7040)"
 
 $events = Get-WinEvent -FilterHashtable @{
     LogName='System'
     ProviderName='Service Control Manager'
     Id=7040
 } -ErrorAction SilentlyContinue |
-Where-Object { $_.Message -match $serviceName }
+Where-Object { $_.Message -match "SysMain" }
 
 if (!$events) {
-    Warn "No startup type change events found."
-}
-else {
+    Warn "No change events found."
+} else {
     foreach ($event in $events) {
 
         Write-Host ""
-        Write-Host "Time        : " -NoNewline
+        Write-Host "Time   : " -NoNewline
         Write-Host $event.TimeCreated -ForegroundColor Magenta
 
-        # Determine change direction
         if ($event.Message -match "to disabled") {
-            Bad "Action      : Service DISABLED"
+            Bad "Action : DISABLED"
         }
         elseif ($event.Message -match "to auto") {
-            Good "Action      : Set to AUTOMATIC"
+            Good "Action : AUTOMATIC"
         }
         elseif ($event.Message -match "to demand") {
-            Warn "Action      : Set to MANUAL"
+            Warn "Action : MANUAL"
         }
         else {
-            Info "Action      : Startup type modified"
+            Info "Action : Modified"
         }
 
-        # Try to determine source
-        $windowStart = $event.TimeCreated.AddMinutes(-2)
-        $windowEnd   = $event.TimeCreated.AddMinutes(2)
-
-        $procEvents = Get-WinEvent -FilterHashtable @{
-            LogName='Security'
-            Id=4688
-            StartTime=$windowStart
-            EndTime=$windowEnd
-        } -ErrorAction SilentlyContinue
-
-        $source = "Unknown"
-        foreach ($p in $procEvents) {
-            $msg = $p.Message
-
-            if ($msg -match "TrustedInstaller.exe" -or $msg -match "TiWorker.exe") {
-                $source = "System (Windows Update)"
-            }
-            elseif ($msg -match "sc.exe" -or $msg -match "powershell.exe") {
-                $source = "Manual (User Command)"
-            }
-        }
-
-        Write-Host "Source      : " -NoNewline
-        if ($source -match "System") { Good $source }
-        elseif ($source -match "Manual") { Warn $source }
-        else { Info "Unknown (Auditing likely disabled)" }
-
+        Info "Source : Windows does not log user by default."
         Write-Host "--------------------------------------------------" -ForegroundColor DarkGray
     }
 }
 
-Section "Audit Complete"
+# ================= MINECRAFT / JAVA PROCESS CHECK =================
+Section "Running Java / Minecraft Processes"
+
+$javaProcesses = Get-Process | Where-Object {
+    $_.ProcessName -match "java" -or
+    $_.ProcessName -match "javaw" -or
+    $_.ProcessName -match "javaws"
+}
+
+if (!$javaProcesses) {
+    Warn "No Java processes currently running."
+} else {
+    foreach ($proc in $javaProcesses) {
+        Write-Host ""
+        Write-Host "Process : " -NoNewline
+        Write-Host $proc.ProcessName -ForegroundColor Yellow
+        Write-Host "PID     : $($proc.Id)"
+        Write-Host "Started : $($proc.StartTime)"
+    }
+}
+
+# ================= PREFETCH CHECK =================
+Section "Prefetch Check (Java / Minecraft)"
+
+$prefetchPath = "$env:SystemRoot\Prefetch"
+
+if (Test-Path $prefetchPath) {
+
+    $pfFiles = Get-ChildItem $prefetchPath -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.Name -match "JAVA" -or
+            $_.Name -match "MINECRAFT"
+        }
+
+    if (!$pfFiles) {
+        Warn "No related prefetch files found."
+    }
+    else {
+        foreach ($pf in $pfFiles) {
+            Write-Host ""
+            Write-Host "Prefetch File : " -NoNewline
+            Write-Host $pf.Name -ForegroundColor Yellow
+            Write-Host "Last Modified : $($pf.LastWriteTime)"
+        }
+    }
+}
+else {
+    Warn "Prefetch folder not accessible."
+}
+
+Section "Scan Complete"
