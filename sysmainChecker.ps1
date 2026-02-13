@@ -313,7 +313,7 @@ foreach ($rp in $regPaths) {
     } catch {}
 }
 
-# 5) Final Summary & Save
+# 5) Final Summary & Save 
 Write-Section "Summary"
 $total = $Report.Findings.Count
 if ($total -eq 0) {
