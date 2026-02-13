@@ -1,40 +1,37 @@
 $prefetchPath = "$env:SystemRoot\Prefetch"
-$pfFiles = Get-ChildItem $prefetchPath -Filter "*.pf" | Where-Object { $_.Name -match "JAVAW" }
+$pfFiles = Get-ChildItem $prefetchPath -Filter "*.pf" | Where-Object { $_.Name -match "JAVAW|MINECRAFT|JAVA" }
 
 foreach ($pf in $pfFiles) {
     Write-Host ""
     Write-Host "================ $($pf.Name) ================" -ForegroundColor DarkGray
 
     $bytes = [System.IO.File]::ReadAllBytes($pf.FullName)
+    $found = @()
 
-    # --- Header info ---
+    # UTF-16LE scan
     try {
-        $version = [BitConverter]::ToUInt32($bytes,0)
-        $lastRunCount = [BitConverter]::ToUInt32($bytes,0x18)
-        $lastExecTime = [DateTime]::FromFileTime([BitConverter]::ToInt64($bytes,0x08))
-        Write-Host ("Version: {0}, Last Run Count: {1}, Last Exec: {2}" -f $version, $lastRunCount, $lastExecTime) -ForegroundColor Cyan
-    } catch { Write-Host "Could not parse header info" -ForegroundColor Red }
-
-    # --- Section C (Referenced files) ---
-    try {
-        switch ($version) {
-            17 { $offC = [BitConverter]::ToUInt32($bytes,0x44); $lenC = [BitConverter]::ToUInt32($bytes,0x48) }
-            23 { $offC = [BitConverter]::ToUInt32($bytes,0x50); $lenC = [BitConverter]::ToUInt32($bytes,0x54) }
-            26 { $offC = [BitConverter]::ToUInt32($bytes,0x50); $lenC = [BitConverter]::ToUInt32($bytes,0x54) }
-            30 { $offC = [BitConverter]::ToUInt32($bytes,0x50); $lenC = [BitConverter]::ToUInt32($bytes,0x54) }
-            default { $offC = 0; $lenC = 0 }
+        $utf16 = [System.Text.Encoding]::Unicode.GetString($bytes) -split "`0"
+        foreach ($s in $utf16) {
+            if ($s -and $s.Trim() -ne "") { $found += [pscustomobject]@{ Item = $s.Trim(); Source = "UTF16" } }
         }
+    } catch {}
 
-        if ($lenC -gt 0 -and ($offC + $lenC) -le $bytes.Length) {
-            $section = $bytes[$offC..($offC+$lenC-1)]
-            $str = [System.Text.Encoding]::Unicode.GetString($section)
-            $entries = $str -split "`0" | Where-Object { $_ -and $_.Trim() -ne "" }
-            Write-Host "`nReferenced Files / Activity:" -ForegroundColor Cyan
-            foreach ($e in $entries) { Write-Host "  $e" -ForegroundColor Green }
-        } else {
-            Write-Host "No Section C content found" -ForegroundColor Yellow
+    # ASCII scan
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($b in $bytes) {
+        if ($b -ge 32 -and $b -le 126) { [void]$sb.Append([char]$b) } else { [void]$sb.Append(" ") }
+    }
+    $asciiParts = $sb.ToString() -split "\s+" | Where-Object { $_ -and $_.Trim() -ne "" }
+    foreach ($s in $asciiParts) { $found += [pscustomobject]@{ Item = $s.Trim(); Source = "ASCII" } }
+
+    if ($found.Count -eq 0) {
+        Write-Host "  No readable content found." -ForegroundColor Yellow
+    } else {
+        # Unique + sort
+        $found = $found | Sort-Object Item -Unique
+        foreach ($f in $found) {
+            $color = if ($f.Source -eq "UTF16") { "Green" } else { "Yellow" }
+            Write-Host ("  {0}" -f $f.Item) -ForegroundColor $color
         }
-    } catch {
-        Write-Host "Error reading Section C: $($_.Exception.Message)" -ForegroundColor Red
     }
 }
