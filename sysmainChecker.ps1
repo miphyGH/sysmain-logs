@@ -62,59 +62,56 @@ if (!$events) {
             Info "Action : Modified"
         }
 
-        Info "Source : Windows does not log user by default."
         Write-Host "--------------------------------------------------" -ForegroundColor DarkGray
     }
 }
 
-# ================= MINECRAFT / JAVA PROCESS CHECK =================
-Section "Running Java / Minecraft Processes"
-
-$javaProcesses = Get-Process | Where-Object {
-    $_.ProcessName -match "java" -or
-    $_.ProcessName -match "javaw" -or
-    $_.ProcessName -match "javaws"
-}
-
-if (!$javaProcesses) {
-    Warn "No Java processes currently running."
-} else {
-    foreach ($proc in $javaProcesses) {
-        Write-Host ""
-        Write-Host "Process : " -NoNewline
-        Write-Host $proc.ProcessName -ForegroundColor Yellow
-        Write-Host "PID     : $($proc.Id)"
-        Write-Host "Started : $($proc.StartTime)"
-    }
-}
-
-# ================= PREFETCH CHECK =================
-Section "Prefetch Check (Java / Minecraft)"
+# ================= PREFETCH DETAILED ANALYSIS =================
+Section "Java / Minecraft Prefetch Analysis"
 
 $prefetchPath = "$env:SystemRoot\Prefetch"
 
-if (Test-Path $prefetchPath) {
-
-    $pfFiles = Get-ChildItem $prefetchPath -ErrorAction SilentlyContinue |
-        Where-Object {
-            $_.Name -match "JAVA" -or
-            $_.Name -match "MINECRAFT"
-        }
-
-    if (!$pfFiles) {
-        Warn "No related prefetch files found."
-    }
-    else {
-        foreach ($pf in $pfFiles) {
-            Write-Host ""
-            Write-Host "Prefetch File : " -NoNewline
-            Write-Host $pf.Name -ForegroundColor Yellow
-            Write-Host "Last Modified : $($pf.LastWriteTime)"
-        }
-    }
+if (!(Test-Path $prefetchPath)) {
+    Bad "Prefetch folder not accessible."
+    exit
 }
-else {
-    Warn "Prefetch folder not accessible."
+
+$pfFiles = Get-ChildItem $prefetchPath -ErrorAction SilentlyContinue |
+Where-Object {
+    $_.Name -match "JAVA" -or
+    $_.Name -match "MINECRAFT"
+}
+
+if (!$pfFiles) {
+    Warn "No Java or Minecraft related prefetch files found."
+} else {
+
+    foreach ($pf in $pfFiles) {
+
+        Write-Host ""
+        Write-Host "Prefetch File : " -NoNewline
+        Write-Host $pf.Name -ForegroundColor Yellow
+
+        Write-Host "Full Path     : $($pf.FullName)"
+        Write-Host "File Size     : $([Math]::Round($pf.Length/1KB,2)) KB"
+        Write-Host "Last Modified : $($pf.LastWriteTime)"
+
+        # Try to extract executable name from filename
+        $exeName = ($pf.Name -split "-")[0]
+        Write-Host "Executable    : $exeName"
+
+        # Attempt basic run count extraction (best effort)
+        try {
+            $bytes = [System.IO.File]::ReadAllBytes($pf.FullName)
+            $runCount = [BitConverter]::ToInt32($bytes, 0xD0)
+            Write-Host "Run Count     : $runCount"
+        }
+        catch {
+            Write-Host "Run Count     : Unable to parse"
+        }
+
+        Write-Host "--------------------------------------------------" -ForegroundColor DarkGray
+    }
 }
 
 Section "Scan Complete"
