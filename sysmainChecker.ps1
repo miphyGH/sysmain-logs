@@ -1,88 +1,114 @@
-# ==============================
-# SysMain Status & Change Audit
-# ==============================
+Clear-Host
 
 $serviceName = "SysMain"
 $daysBack = 30
 $startDate = (Get-Date).AddDays(-$daysBack)
 
-Write-Host "====================================="
-Write-Host " Current SysMain Service Status"
-Write-Host "====================================="
+function Write-Section($text) {
+    Write-Host ""
+    Write-Host "=============================================" -ForegroundColor DarkGray
+    Write-Host " $text" -ForegroundColor Cyan
+    Write-Host "=============================================" -ForegroundColor DarkGray
+}
+
+function Write-Good($text) { Write-Host $text -ForegroundColor Green }
+function Write-Bad($text)  { Write-Host $text -ForegroundColor Red }
+function Write-Warn($text) { Write-Host $text -ForegroundColor Yellow }
+
+# =========================
+# Current Status
+# =========================
+Write-Section "Current SysMain Service Status"
 
 try {
     $service = Get-Service -Name $serviceName -ErrorAction Stop
-    $startType = (Get-CimInstance Win32_Service -Filter "Name='$serviceName'").StartMode
+    $wmi = Get-CimInstance Win32_Service -Filter "Name='$serviceName'"
 
-    Write-Host "Service Name : $($service.Name)"
-    Write-Host "Status       : $($service.Status)"
-    Write-Host "Startup Type : $startType"
+    Write-Host "Service Name : " -NoNewline
+    Write-Host $service.Name -ForegroundColor White
+
+    Write-Host "Status       : " -NoNewline
+    if ($service.Status -eq "Running") {
+        Write-Good "Running"
+    } else {
+        Write-Bad $service.Status
+    }
+
+    Write-Host "Startup Type : " -NoNewline
+    if ($wmi.StartMode -eq "Disabled") {
+        Write-Bad "Disabled"
+    } elseif ($wmi.StartMode -eq "Auto") {
+        Write-Good "Automatic"
+    } else {
+        Write-Warn $wmi.StartMode
+    }
 }
 catch {
-    Write-Host "SysMain service not found."
+    Write-Bad "SysMain service not found."
     exit
 }
 
-Write-Host "`n====================================="
-Write-Host " SysMain Changes (Last $daysBack Days)"
-Write-Host "====================================="
+# =========================
+# Change History
+# =========================
+Write-Section "SysMain Changes (Last $daysBack Days)"
 
-# Get Service Control Manager events
 $events = Get-WinEvent -FilterHashtable @{
     LogName = 'System'
     ProviderName = 'Service Control Manager'
-    Id = 7040,7036
+    Id = 7040
     StartTime = $startDate
-} | Where-Object {
-    $_.Message -match $serviceName
-}
+} | Where-Object { $_.Message -match $serviceName }
 
 if (!$events) {
-    Write-Host "No SysMain changes found in the last $daysBack days."
-    exit
-}
+    Write-Warn "No startup type changes found."
+} else {
 
-foreach ($event in $events) {
+    foreach ($event in $events) {
 
-    Write-Host "`n-------------------------------------"
-    Write-Host "Time      : $($event.TimeCreated)"
-    Write-Host "Event ID  : $($event.Id)"
+        Write-Host ""
+        Write-Host "Time : " -NoNewline
+        Write-Host $event.TimeCreated -ForegroundColor Magenta
 
-    if ($event.Id -eq 7040) {
-        Write-Host "Type      : Startup Type Change"
-    }
-    elseif ($event.Id -eq 7036) {
-        Write-Host "Type      : Service State Change"
-    }
-
-    Write-Host "Details   :"
-    Write-Host $event.Message
-
-    # Attempt correlation with Security log
-    $timeWindowStart = $event.TimeCreated.AddMinutes(-2)
-    $timeWindowEnd   = $event.TimeCreated.AddMinutes(2)
-
-    $securityEvents = Get-WinEvent -FilterHashtable @{
-        LogName = 'Security'
-        StartTime = $timeWindowStart
-        EndTime = $timeWindowEnd
-    } -ErrorAction SilentlyContinue
-
-    $possibleUsers = $securityEvents | Where-Object {
-        $_.Id -in 4688,4670,4697
-    }
-
-    if ($possibleUsers) {
-        Write-Host "`nPossible Responsible User(s):"
-        foreach ($sec in $possibleUsers) {
-            Write-Host " - $($sec.Properties[1].Value) (Event ID: $($sec.Id))"
+        if ($event.Message -match "disabled") {
+            Write-Bad "Action : Service was DISABLED"
         }
-    }
-    else {
-        Write-Host "`nUser info: Not available (Advanced auditing may not be enabled)."
+        elseif ($event.Message -match "auto") {
+            Write-Good "Action : Service set to AUTOMATIC"
+        }
+        elseif ($event.Message -match "demand") {
+            Write-Warn "Action : Service set to MANUAL"
+        }
+
+        # Attempt to correlate process creation events
+        $windowStart = $event.TimeCreated.AddMinutes(-3)
+        $windowEnd   = $event.TimeCreated.AddMinutes(3)
+
+        $procEvents = Get-WinEvent -FilterHashtable @{
+            LogName='Security'
+            Id=4688
+            StartTime=$windowStart
+            EndTime=$windowEnd
+        } -ErrorAction SilentlyContinue
+
+        $matches = $procEvents | Where-Object {
+            $_.Message -match "sc.exe" -or
+            $_.Message -match "powershell.exe" -or
+            $_.Message -match "services.exe"
+        }
+
+        if ($matches) {
+            foreach ($m in $matches) {
+                $user = ($m.Properties[1].Value)
+                Write-Host "Possible User : " -NoNewline
+                Write-Host $user -ForegroundColor Yellow
+            }
+        } else {
+            Write-Warn "User info not available (Auditing likely disabled at time of change)."
+        }
+
+        Write-Host "---------------------------------------------" -ForegroundColor DarkGray
     }
 }
 
-Write-Host "`n====================================="
-Write-Host " Audit Complete"
-Write-Host "====================================="
+Write-Section "Audit Complete"
