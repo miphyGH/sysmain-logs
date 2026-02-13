@@ -10,7 +10,7 @@ $Events = Get-WinEvent -FilterHashtable @{
     StartTime = $StartTime
 } -ErrorAction SilentlyContinue | Where-Object { $_.Message -like "*SysMain*" }
 
-if ($Events) {
+if ($Events) { 
     foreach ($Event in $Events) {
         $Time = $Event.TimeCreated
         $User = $Event.UserId # This identifies the SID or User Account
