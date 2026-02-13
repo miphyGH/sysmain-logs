@@ -79,8 +79,6 @@ if (!$events) {
         elseif ($event.Message -match "demand") {
             Write-Warn "Action : Service set to MANUAL"
         }
-
-        # Attempt to correlate process creation events
         $windowStart = $event.TimeCreated.AddMinutes(-3)
         $windowEnd   = $event.TimeCreated.AddMinutes(3)
 
