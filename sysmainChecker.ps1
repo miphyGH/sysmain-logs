@@ -1,55 +1,29 @@
-Clear-Host
-
-function Section($text) {
-    Write-Host ""
-    Write-Host "==================================================" -ForegroundColor DarkGray
-    Write-Host " $text" -ForegroundColor Cyan
-    Write-Host "==================================================" -ForegroundColor DarkGray
-}
-
-function Good($t){ Write-Host $t -ForegroundColor Green }
-function Warn($t){ Write-Host $t -ForegroundColor Yellow }
-
 $prefetchPath = "$env:SystemRoot\Prefetch"
-
-Section "Minecraft / Java Prefetch File Scan"
-
-if (!(Test-Path $prefetchPath)) {
-    Write-Host "Prefetch folder not found." -ForegroundColor Red
-    exit
-}
-
-# Find Minecraft / Java prefetch files
-$pfFiles = Get-ChildItem $prefetchPath -Filter "*.pf" -ErrorAction SilentlyContinue |
-Where-Object { $_.Name -match "MINECRAFT" -or $_.Name -match "JAVA" }
-
-if (!$pfFiles) {
-    Warn "No Minecraft or Java prefetch files found."
-    exit
-}
+$pfFiles = Get-ChildItem $prefetchPath -Filter "*.pf" | Where-Object { $_.Name -match "MINECRAFT|JAVA" }
 
 foreach ($pf in $pfFiles) {
-
-    Section "Prefetch File: $($pf.Name)"
-
-    # Read raw bytes
+    Write-Host "`n================ $($pf.Name) ================"
     $bytes = [System.IO.File]::ReadAllBytes($pf.FullName)
 
-    # Convert to ASCII printable strings (length ≥4)
-    $strings = -join ($bytes | ForEach-Object {
-        if ($_ -ge 32 -and $_ -le 126) { [char]$_ } else { " " }
-    }) -split '\s+'
-
-    # Find .exe, .jar, .zip references
-    $matches = $strings | Where-Object { $_ -match '\.exe$|\.jar$|\.zip$' } | Sort-Object -Unique
-
-    if ($matches.Count -eq 0) {
-        Warn "No .exe / .jar / .zip references found."
-    } else {
-        foreach ($item in $matches) {
-            Good $item
-        }
+    # Determine version (first 4 bytes)
+    $version = [BitConverter]::ToUInt32($bytes,0)
+    # Section C offset and length depend on version
+    switch ($version) {
+        17 { $offsetC = [BitConverter]::ToUInt32($bytes,0x44); $lenC = [BitConverter]::ToUInt32($bytes,0x48) }
+        23 { $offsetC = [BitConverter]::ToUInt32($bytes,0x50); $lenC = [BitConverter]::ToUInt32($bytes,0x54) }
+        26 { $offsetC = [BitConverter]::ToUInt32($bytes,0x50); $lenC = [BitConverter]::ToUInt32($bytes,0x54) }
+        30 { $offsetC = [BitConverter]::ToUInt32($bytes,0x50); $lenC = [BitConverter]::ToUInt32($bytes,0x54) }
+        default { Write-Host "Unsupported PF version $version"; continue }
     }
-}
 
-Section "Scan Complete"
+    if (($offsetC + $lenC) -gt $bytes.Length) { Write-Host "Invalid offsets"; continue }
+
+    $sectionC = $bytes[$offsetC..($offsetC+$lenC-1)]
+    # Decode UTF-16LE
+    $str = [System.Text.Encoding]::Unicode.GetString($sectionC)
+    # Split on nulls
+    $paths = $str -split "`0" | Where-Object { $_ -match '\.exe$|\.jar$|\.zip$' } | Sort-Object -Unique
+
+    if ($paths.Count -eq 0) { Write-Host "No .exe/.jar/.zip found" }
+    else { $paths | ForEach-Object { Write-Host $_ } }
+}
