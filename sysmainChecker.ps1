@@ -1,33 +1,51 @@
+# Custom Response Header
 Write-Host "====================================================" -ForegroundColor Cyan
-Write-Host "      SYSTEM LOG AUDIT: SYSMAIN (SUPERFETCH)        " -ForegroundColor Cyan
+Write-Host "      SYSTEM AUDIT: SYSMAIN ACTIVITY (30 DAYS)      " -ForegroundColor Cyan
 Write-Host "====================================================" -ForegroundColor Cyan
 
+# 1. Immediate Status Check
+$currentStatus = Get-Service SysMain -ErrorAction SilentlyContinue
+if ($currentStatus) {
+    $color = if ($currentStatus.Status -eq 'Running') { "Green" } else { "Red" }
+    Write-Host "[*] Current SysMain Status: $($currentStatus.Status)" -ForegroundColor $color
+    Write-Host "[*] Current Startup Type  : $($currentStatus.StartType)" -ForegroundColor $color
+} else {
+    Write-Host "[!] SysMain service not found on this system." -ForegroundColor Red
+}
+Write-Host "----------------------------------------------------"
+
+# 2. Log Audit
 $StartTime = (Get-Date).AddDays(-30)
 
-$Events = Get-WinEvent -FilterHashtable @{
-    LogName   = 'System'
-    Id        = 7040
-    StartTime = $StartTime
-} -ErrorAction SilentlyContinue | Where-Object { $_.Message -like "*SysMain*" }
+# Query 7040 (Type Change) and 7036 (Start/Stop)
+try {
+    $Events = Get-WinEvent -FilterHashtable @{
+        LogName   = 'System'
+        Id        = 7040, 7036
+        StartTime = $StartTime
+    } -ErrorAction SilentlyContinue | Where-Object { $_.Message -like "*SysMain*" }
 
-if ($Events) { 
-    foreach ($Event in $Events) {
-        $Time = $Event.TimeCreated
-        $User = $Event.UserId # This identifies the SID or User Account
-        $Message = $Event.Message
+    if ($Events) {
+        foreach ($Event in $Events) {
+            $Time = $Event.TimeCreated
+            $UserSID = $Event.UserId
+            
+            # Resolve User
+            $UserAccount = "SYSTEM/Service Control Manager"
+            if ($UserSID) {
+                try { $UserAccount = (New-Object System.Security.Principal.SecurityIdentifier($UserSID)).Translate([System.Security.Principal.NTAccount]).Value } catch {}
+            }
 
-        Write-Host "[!] Change Detected" -ForegroundColor Yellow
-        Write-Host "Date/Time : $Time"
-        Write-Host "Action    : $Message"
-        
-        try {
-            $Account = (New-Object System.Security.Principal.SecurityIdentifier($User)).Translate([System.Security.Principal.NTAccount])
-            Write-Host "Changed By: $Account" -ForegroundColor White
-        } catch {
-            Write-Host "Changed By: SYSTEM/Unknown" -ForegroundColor Gray
+            Write-Host "[!] Event Found: $($Time)" -ForegroundColor Yellow
+            Write-Host "    Details: $($Event.Message)"
+            Write-Host "    Triggered By: $UserAccount"
+            Write-Host "----------------------------------------------------"
         }
-        Write-Host "----------------------------------------------------"
+    } else {
+        Write-Host "[-] No logs found for SysMain in the last 30 days." -ForegroundColor Gray
+        Write-Host "    Note: If service is disabled but logs are empty, "
+        Write-Host "    logs may have been cleared or modified via Registry." -ForegroundColor Yellow
     }
-} else {
-    Write-Host "[+] No SysMain changes found in the last 30 days." -ForegroundColor Green
+} catch {
+    Write-Host "[X] Access Denied. Please run as Administrator." -ForegroundColor Red
 }
